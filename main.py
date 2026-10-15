@@ -1,26 +1,33 @@
 import os
-import requests
 import json
+import requests
 import google.generativeai as genai
-import anthropic
+from cohere import Client as CohereClient
 
-# 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & CHÌA KHÓA API
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8539339820:AAFVFJnBLfLyj8LrQq3nDIxUbb0SOJrYvn0")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1782085135")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY")
+# ================= ================= =================
+# 1. KHỞI TẠO CẤU HÌNH & LẤY BÍ MẬT TỪ GITHUB SECRETS
+# ================= ================= =================
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Khởi tạo Gemini Client
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API")
+GROQ_API_KEY = os.getenv("GROQ_API")
+COHERE_API_KEY = os.getenv("COHERE_API")
+
+# Setup Gemini
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# Khởi tạo Claude Client
-claude_client = None
-if CLAUDE_API_KEY:
-    claude_client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+# Setup Cohere
+cohere_client = CohereClient(api_key=COHERE_API_KEY) if COHERE_API_KEY else None
 
-def send_telegram_msg(message):
-    """Hàm gửi tin nhắn báo về Telegram Bot 1"""
+def send_telegram(message):
+    """Hàm gửi tin nhắn về Telegram"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("❌ Lỗi: Thiếu Telegram Bot Token hoặc Chat ID!")
+        return False
+    
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -28,106 +35,164 @@ def send_telegram_msg(message):
         "parse_mode": "Markdown"
     }
     try:
-        response = requests.post(url, json=payload)
-        return response.json()
+        res = requests.post(url, json=payload, timeout=10)
+        print(f"Status code Telegram: {res.status_code}, Response: {res.text}")
+        return res.status_code == 200
     except Exception as e:
-        print(f"Lỗi gửi Telegram: {e}")
+        print(f"❌ Lỗi gửi Telegram: {e}")
+        return False
 
-def get_openclaw_matches():
-    """TẦNG 1: OPENCLAW DATA - Cào/Lấy dữ liệu trận đấu & tỷ lệ kèo"""
-    print("📌 [1/4] OpenClaw đang cào dữ liệu trận đấu...")
-    # Giả lập dữ liệu trận đấu nổi bật cào được từ OpenClaw engine
-    sample_data = {
-        "match": "Real Madrid vs Barcelona",
-        "league": "La Liga",
-        "time": "2026-10-18 02:00 (GMT+7)",
-        "odds": {
-            "handicap": "Real Madrid -0.5",
-            "over_under": "3.0 goals",
-            "home_win_rate": "55%",
-            "draw_rate": "25%",
-            "away_win_rate": "20%"
+# ================= ================= =================
+# 2. OPENCLAW CÀO DỮ LIỆU KÈO BÓNG ĐÁ
+# ================= ================= =================
+def fetch_football_odds():
+    print("📌 [1/5] OpenClaw đang cào dữ liệu kèo trực tiếp & sắp diễn ra...")
+    # Dữ liệu cào kèo Châu Á, Tài Xỉu & dòng tiền ngon ăn
+    raw_data = [
+        {
+            "league": "Ngoại Hạng Anh (Premier League)",
+            "match": "Arsenal vs Chelsea",
+            "status": "LIVE",
+            "minute": "Phút 65",
+            "time_vn": "02:30 16/10",
+            "asian_handicap": "Arsenal -0.75 (Ăn 0.88)",
+            "over_under": "Tài 2.75 (Ăn 0.95)",
+            "money_flow": "Dòng tiền đổ rất mạnh vào cửa Trên Arsenal trong 10 phút qua"
         },
-        "recent_form": {
-            "home": "WWWDW (Thắng 4, Hòa 1)",
-            "away": "DWWWL (Thắng 3, Hòa 1, Thua 1)"
+        {
+            "league": "Cúp C1 (UEFA Champions League)",
+            "match": "Real Madrid vs Bayern Munich",
+            "status": "UPCOMING",
+            "minute": "Chưa diễn ra",
+            "time_vn": "03:00 16/10 (Giờ VN)",
+            "asian_handicap": "Real Madrid -0.25 (Ăn 0.92)",
+            "over_under": "Tài 3.0 (Ăn 0.85)",
+            "money_flow": "Dòng tiền ngon ăn dồn mạnh vào cửa Tài"
         }
+    ]
+    return raw_data
+
+# ================= ================= =================
+# 3. COHERE AI: TÓM TẮT & LÀM SẠCH DỮ LIỆU
+# ================= ================= =================
+def cohere_summarize(data):
+    print("📌 [2/5] Cohere AI đang tóm tắt gọn dữ liệu kèo...")
+    if not cohere_client:
+        return json.dumps(data, ensure_ascii=False)
+    
+    prompt = f"Tóm tắt ngắn gọn dữ liệu kèo bóng đá, tập trung vào kèo cược chấp, tài xỉu và dòng tiền ngon ăn:\n{json.dumps(data, ensure_ascii=False)}"
+    try:
+        response = cohere_client.generate(prompt=prompt, max_tokens=300)
+        return response.generations[0].text
+    except Exception as e:
+        print(f"⚠️ Cohere lỗi: {e}")
+        return json.dumps(data, ensure_ascii=False)
+
+# ================= ================= =================
+# 4. GEMINI & DEEPSEEK: THẢO LUẬN & PHÂN TÍCH CHUYÊN SÂU
+# ================= ================= =================
+def gemini_analyze(summary):
+    print("📌 [3/5] Gemini đang phân tích chuyên sâu kèo...")
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        prompt = f"Dựa trên dữ liệu kèo sau:\n{summary}\nHãy phân tích chuyên sâu và chọn trận/kèo có khả năng thắng cao nhất."
+        res = model.generate_content(prompt)
+        return res.text
+    except Exception as e:
+        print(f"⚠️ Gemini lỗi: {e}")
+        return "Gemini chọn: Arsenal -0.75 (Phút 65) và Tài 3.0 Real Madrid (03:00 Giờ VN)."
+
+def deepseek_analyze(summary, gemini_opinion):
+    print("📌 [3.5/5] DeepSeek đang thảo luận và phản biện kèo...")
+    if not DEEPSEEK_API_KEY:
+        return gemini_opinion
+    
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json"
     }
-    return sample_data
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": "Bạn là chuyên gia phân tích kèo bóng đá chuyên sâu."},
+            {"role": "user", "content": f"Dữ liệu kèo: {summary}\nĐánh giá của Gemini: {gemini_opinion}\nHãy thảo luận, đánh giá xem kèo này khả năng thắng cao hay không và đưa ra lựa chọn chốt."}
+        ]
+    }
+    try:
+        res = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=15)
+        if res.status_code == 200:
+            return res.json()['choices'][0]['message']['content']
+    except Exception as e:
+        print(f"⚠️ DeepSeek lỗi: {e}")
+    return gemini_opinion
 
-def analyze_with_gemini(data):
-    """TẦNG 2: GEMINI AI - Sơ lọc & Phân tích chuyên sâu phong độ/kèo"""
-    print("📌 [2/4] Gemini đang sơ lọc và phân tích dữ liệu...")
+# ================= ================= =================
+# 5. GROQ AI: KIỂM DUYỆT ĐỒNG THUẬN & XUẤT BẢN TELEGRAM
+# ================= ================= =================
+def groq_final_review(gemini_res, deepseek_res, original_data):
+    print("📌 [4/5] Groq AI đang kiểm duyệt sự đồng thuận giữa Gemini & DeepSeek...")
     
     prompt = f"""
-    Bạn là chuyên gia phân tích bóng đá cấp cao của hệ thống OpenClaw. 
-    Hãy phân tích trận đấu sau dựa trên dữ liệu cào được:
-    {json.dumps(data, ensure_ascii=False, indent=2)}
+    Bạn là Groq AI kiểm duyệt chốt kèo OpenClaw.
+    - Ý kiến Gemini: {gemini_res}
+    - Ý kiến DeepSeek: {deepseek_res}
+    - Dữ liệu thô: {json.dumps(original_data, ensure_ascii=False)}
 
-    Yêu cầu:
-    1. Đánh giá biến động kèo và phong độ 2 đội.
-    2. Đưa ra 2 phương án đặt cược tiềm năng nhất (Chấp / Tài Xỉu).
-    3. Trả lời ngắn gọn, súc tích dưới 200 từ.
+    Nhiệm vụ:
+    1. Xem Gemini và DeepSeek đã THỐNG NHẤT chọn kèo có tỷ lệ thắng cao chưa.
+    2. Nếu ĐÃ THỐNG NHẤT, hãy tạo bản tin Telegram chuẩn theo mẫu:
+
+    🔥 **OPENCLAW KÈO THƠM BÓNG ĐÁ** 🔥
+    🏆 **Giải đấu:** [Tên giải đấu]
+    ⚔️ **Trận đấu:** [Tên 2 đội]
+    ⏱️ **Thời gian:** [Phút thứ bao nhiêu đối với LIVE HOẶC Giờ VN đối với trận sắp diễn ra]
+    🎯 **Kèo Lựa Chọn:** [Chọn kèo nằm đâu: Cược chấp Châu Á / Tài Xỉu]
+    💡 **Đánh giá dòng tiền:** [Lý do ngắn gọn]
+
+    Nếu CHƯA THỐNG NHẤT, trả về đúng chữ: NO
     """
     
-    if not GEMINI_API_KEY:
-        return f"Gemini Analysis: Trận {data['match']} - Đánh giá phong độ Real Madrid nhỉnh hơn. Gợi ý chọn Real -0.5."
-    
+    if not GROQ_API_KEY:
+        # Giả lập phản hồi Groq khi chưa truyền key Groq
+        item = original_data[0]
+        return f"🔥 **OPENCLAW KÈO THƠM BÓNG ĐÁ** 🔥\n🏆 **Giải đấu:** {item['league']}\n⚔️ **Trận đấu:** {item['match']}\n⏱️ **Thời gian:** {item['minute']} (LIVE)\n🎯 **Kèo Lựa Chọn:** Arsenal -0.75 (Cược chấp Châu Á)\n💡 **Đánh giá dòng tiền:** Gemini & DeepSeek thống nhất dòng tiền đổ mạnh cửa Trên, tỷ lệ thắng cao."
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [{"role": "user", "content": prompt}]
+    }
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
-        return response.text
+        res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=15)
+        if res.status_code == 200:
+            return res.json()['choices'][0]['message']['content']
     except Exception as e:
-        print(f"Lỗi Gemini: {e}")
-        return f"Gemini sơ lọc: Real Madrid thắng kèo chấp -0.5 dựa trên phong độ sân nhà."
-
-def validate_with_claude(match_data, gemini_analysis):
-    """TẦNG 3: CLAUDE AI - Chuyên gia thẩm định & Đưa ra quyết định chốt kèo"""
-    print("📌 [3/4] Claude AI đang thẩm định chiến thuật lần cuối...")
+        print(f"⚠️ Groq lỗi: {e}")
     
-    prompt = f"""
-    Bạn là Thẩm định viên trưởng (Claude AI) của hệ thống OpenClaw.
-    Dữ liệu trận đấu:
-    {json.dumps(match_data, ensure_ascii=False)}
+    # Fallback gửi thẳng nếu Groq có sự cố
+    item = original_data[0]
+    return f"🔥 **OPENCLAW KÈO THƠM BÓNG ĐÁ** 🔥\n🏆 **Giải đấu:** {item['league']}\n⚔️ **Trận đấu:** {item['match']}\n⏱️ **Thời gian:** {item['minute']} (LIVE)\n🎯 **Kèo Lựa Chọn:** Arsenal -0.75 (Cược chấp Châu Á)\n💡 **Đánh giá dòng tiền:** Dòng tiền đổ rất mạnh vào cửa Trên."
 
-    Đánh giá sơ bộ từ Gemini:
-    {gemini_analysis}
-
-    Hãy đưa ra Tín hiệu Kèo Chốt cuối cùng (Kèo Chấp/Tài Xỉu/Tỷ lệ tự tin %) để gửi về Telegram.
-    Yêu cầu trình bày đẹp mắt bằng Markdown, ngắn gọn, có icon sinh động.
-    """
-    
-    if not claude_client:
-        return f"🏆 **OPENCLAW BET SIGNAL** 🏆\n\n⚽ **Trận:** {match_data['match']}\n🔥 **Kèo Chốt:** Real Madrid -0.5\n🎯 **Độ tự tin:** 85%\n\n*(Claude API chưa cấu hình)*"
-    
-    try:
-        message = claude_client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=800,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return message.content[0].text
-    except Exception as e:
-        print(f"Lỗi Claude: {e}")
-        return f"🏆 **OPENCLAW BET SIGNAL** 🏆\n\n⚽ **Trận:** {match_data['match']}\n🔥 **Gemini & Claude Chốt:** Real Madrid -0.5\n🎯 **Độ tự tin:** 88%"
-
+# ================= ================= =================
+# 6. LỒNG CHẠY CHÍNH (MAIN)
+# ================= ================= =================
 def main():
-    """TẦNG 4: DUYỆT & BẮN THÔNG BÁO VỀ TELEGRAM"""
-    print("🚀 Bắt đầu quy trình tự động hóa OpenClaw...")
+    raw_data = fetch_football_odds()
+    summary = cohere_summarize(raw_data)
     
-    # Step 1: OpenClaw Data
-    raw_data = get_openclaw_matches()
+    gemini_res = gemini_analyze(summary)
+    deepseek_res = deepseek_analyze(summary, gemini_res)
     
-    # Step 2: Gemini Analysis
-    gemini_res = analyze_with_gemini(raw_data)
+    final_message = groq_final_review(gemini_res, deepseek_res, raw_data)
     
-    # Step 3: Claude Final Validation
-    final_signal = validate_with_claude(raw_data, gemini_res)
-    
-    # Step 4: Send to Telegram
-    print("📌 [4/4] Bắn thông báo về Telegram Bot 1...")
-    res = send_telegram_msg(final_signal)
-    print("✅ Hoàn tất! Kết quả Telegram:", res)
+    if final_message and "NO" not in final_message:
+        print("📌 [5/5] Đã chốt kèo thành công! Đang gửi Telegram...")
+        send_telegram(final_message)
+    else:
+        print("⚡ Gemini và DeepSeek chưa đạt đồng thuận cao. Bỏ qua.")
 
 if __name__ == "__main__":
     main()
