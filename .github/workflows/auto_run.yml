@@ -1,31 +1,32 @@
-name: OpenClaw 24/7 Auto Run
+name: OpenClaw Auto Run 24/7
 
 on:
   schedule:
-    # Tự động chạy mỗi 6 tiếng một lần (có thể chỉnh lại sau)
-    - cron: '0 */6 * * *'
-  workflow_dispatch: # Cho phép bấm nút chạy thủ công trên GitHub
+    - cron: '*/30 * * * *'  # Tự động chạy mỗi 30 phút
+  workflow_dispatch:        # Cho phép bấm chạy thủ công bất cứ lúc nào
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Lấy code từ GitHub
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v3
 
-      - name: Cài đặt Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
 
-      - name: Cài đặt các thư viện
-        run: |
-          python -m pip install --upgrade pip
-          pip install python-dotenv google-genai
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests google-generativeai anthropic
 
-      - name: Chạy Bot OpenClaw
-        env:
-          API_KEY: ${{ secrets.API_KEY }}
-        run: python main.py
+    - name: Run OpenClaw Engine
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: python main.py
