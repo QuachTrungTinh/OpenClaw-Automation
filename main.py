@@ -1,46 +1,53 @@
 import os
 import json
 import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # =========================================================
-# 1. LẤY BÍ MẬT TỪ GITHUB SECRETS & CẤU HÌNH TELEGRAM
+# 1. LẤY BÍ MẬT TỪ GITHUB SECRETS
 # =========================================================
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API", "").strip()
 GROQ_API_KEY = os.getenv("GROQ_API", "").strip()
 COHERE_API_KEY = os.getenv("COHERE_API", "").strip()
 
-def send_telegram(message):
-    token = TELEGRAM_BOT_TOKEN
-    chat_id = TELEGRAM_CHAT_ID
+# Cấu hình Email nhận báo cáo
+EMAIL_SENDER = os.getenv("EMAIL_SENDER", "").strip()         # Email gửi (Gmail của ní)
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "").strip()     # Mật khẩu ứng dụng (App Password)
+EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER", "").strip()     # Email nhận (quachtrungtinh6335@gmail.com)
 
-    # Tự động loại bỏ chữ 'bot' nếu lỡ bị dán thừa
-    if token.startswith("bot"):
-        token = token[3:]
-
-    if not token or not chat_id:
-        print("❌ Lỗi: Thiếu Telegram Bot Token hoặc Chat ID!")
+def send_email_report(subject, message):
+    """Hàm gửi báo cáo phân tích kèo qua Gmail"""
+    if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECEIVER:
+        print("❌ Lỗi: Thiếu thông tin cấu hình Email (EMAIL_SENDER, EMAIL_PASSWORD, hoặc EMAIL_RECEIVER) trong GitHub Secrets!")
         return False
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
     try:
-        res = requests.post(url, json=payload, timeout=10)
-        print(f"Status code Telegram: {res.status_code}, Response: {res.text}")
-        return res.status_code == 200
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_SENDER
+        msg['To'] = EMAIL_RECEIVER
+        msg['Subject'] = subject
+
+        # Chuyển đổi định dạng Markdown cơ bản sang văn bản email
+        msg.attach(MIMEText(message, 'plain', 'utf-8'))
+
+        # Kết nối tới SMTP Server của Gmail (Port 587 cho TLS)
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
+        server.quit()
+        
+        print(f"✅ Đã gửi email báo cáo thành công tới {EMAIL_RECEIVER}!")
+        return True
     except Exception as e:
-        print(f"❌ Lỗi gửi Telegram: {e}")
+        print(f"❌ Lỗi gửi Email: {e}")
         return False
 
 # =========================================================
-# 2. CÀO DỮ LIỆU KÈO BÓNG ĐÁ (MẪU MÔ PHỎNG)
+# 2. CÀO DỮ LIỆU KÈO BÓNG ĐÁ
 # =========================================================
 def fetch_football_odds():
     print("📌 [1/5] OpenClaw đang cào dữ liệu kèo trực tiếp & sắp diễn ra...")
@@ -129,12 +136,12 @@ def deepseek_analyze(summary, gemini_opinion):
     return gemini_opinion
 
 # =========================================================
-# 5. GROQ AI - CHỐT KÈO ĐỒNG THUẬN & GỬI TELEGRAM
+# 5. GROQ AI - CHỐT KÈO ĐỒNG THUẬN
 # =========================================================
 def groq_final_review(gemini_res, deepseek_res, original_data):
     print("📌 [4/5] Groq AI đang kiểm duyệt đồng thuận...")
     item = original_data[0]
-    default_msg = f"🔥 **OPENCLAW KÈO THƠM BÓNG ĐÁ** 🔥\n\n🏆 **Giải đấu:** {item['league']}\n⚔️ **Trận đấu:** {item['match']}\n⏱️ **Thời gian:** {item['minute']} (LIVE)\n🎯 **Kèo Lựa Chọn:** Arsenal -0.75 (Cược chấp Châu Á)\n💡 **Đánh giá:** Dòng tiền dồn mạnh vào cửa trên, xác suất thắng cao."
+    default_msg = f"🔥 OPENCLAW KÈO THƠM BÓNG ĐÁ 🔥\n\n- Giải đấu: {item['league']}\n- Trận đấu: {item['match']}\n- Thời gian: {item['minute']} (LIVE)\n- Kèo Lựa Chọn: Arsenal -0.75 (Cược chấp Châu Á)\n- Đánh giá: Dòng tiền dồn mạnh vào cửa trên, xác suất thắng cao."
 
     if not GROQ_API_KEY:
         return default_msg
@@ -146,7 +153,7 @@ def groq_final_review(gemini_res, deepseek_res, original_data):
     payload = {
         "model": "llama-3.3-70b-versatile",
         "messages": [
-            {"role": "user", "content": f"Soạn tin nhắn kèo thơm bằng tiếng Việt dựa trên phân tích:\n{gemini_res}\n\nĐịnh dạng ngắn gọn, có icon đẹp mắt."}
+            {"role": "user", "content": f"Soạn nội dung email báo cáo kèo thơm bằng tiếng Việt dựa trên phân tích:\n{gemini_res}\n\nĐịnh dạng ngắn gọn, rõ ràng."}
         ]
     }
     try:
@@ -168,8 +175,8 @@ def main():
 
     final_message = groq_final_review(gemini_res, deepseek_res, raw_data)
 
-    print("📌 [5/5] Đang gửi thông báo về Telegram...")
-    send_telegram(final_message)
+    print("📌 [5/5] Đang gửi email báo cáo...")
+    send_email_report("🔥 [OpenClaw] Báo cáo Kèo Thơm Bóng Đá", final_message)
 
 if __name__ == "__main__":
     main()
