@@ -154,7 +154,32 @@ def main():
     final_message = groq_final_review(gemini_res, deepseek_res, raw_data)
     
     print("📌 [5/5] Đang gửi thông báo về Telegram...")
-    send_telegram(final_message)
+    def send_telegram(message):
+    """Hàm gửi tin nhắn về Telegram"""
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
+    # Tự động loại bỏ chữ 'bot' ở đầu nếu lỡ dán thừa
+    if token.startswith("bot"):
+        token = token[3:]
+
+    if not token or not chat_id:
+        print("❌ Lỗi: Thiếu Telegram Bot Token hoặc Chat ID!")
+        return False
+    
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        res = requests.post(url, json=payload, timeout=10)
+        print(f"Status code Telegram: {res.status_code}, Response: {res.text}")
+        return res.status_code == 200
+    except Exception as e:
+        print(f"❌ Lỗi gửi Telegram: {e}")
+        return False
 
 if __name__ == "__main__":
     main()
